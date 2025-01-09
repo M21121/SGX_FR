@@ -1,0 +1,11 @@
+enclave {
+    from "sgx_tstdc.edl" import *;
+
+    trusted {
+        public int ecall_check_number(int number);
+        public sgx_status_t ecall_initialize_secret_data(
+            [in, size=sealed_size] const uint8_t* sealed_data, 
+            size_t sealed_size
+        );
+    };
+};
