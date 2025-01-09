@@ -1,0 +1,10 @@
+enclave {
+    trusted {
+        public sgx_status_t ecall_initialize_reference_vectors([in, size=sealed_size] const uint8_t* sealed_data, size_t sealed_size);
+        public float ecall_compute_cosine_similarity([in, count=512] const float* query_vector);
+    };
+
+    untrusted {
+        // ... any OCALLS if needed ...
+    };
+};
