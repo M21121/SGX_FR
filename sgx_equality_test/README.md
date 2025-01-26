@@ -37,13 +37,13 @@ cd ../..
    a. Create a file with secret numbers:
       
 ```Bash
-./tools/value_sealer/value_sealer seal tools/sealed_data/secret_numbers.dat 42 123 456 789 # (Replace numbers with your desired secret values)
+./tools/value_sealer/value_sealer seal tools/sealed_data/secret_numbers.dat secretnumbers.txt (Replace numbers with your desired secret values)
 ```
 
    b. Create a file with test numbers:
       
 ```Bash
-./tools/value_sealer/value_sealer seal-tests tools/sealed_data/test_numbers.dat 42 100 200 456 # (Replace numbers with values you want to test)
+./tools/value_sealer/value_sealer seal-tests tools/sealed_data/test_numbers.dat testnumbers.txt
 ```
 
 4. Run the Program
