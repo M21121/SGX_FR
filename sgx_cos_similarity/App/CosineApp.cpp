@@ -1,3 +1,4 @@
+// ./App/CosineApp.cpp
 #include "CosineApp.h"
 #include "CosineEnclave_u.h"
 #include "shared_types.h"
@@ -9,7 +10,6 @@
 #include <cstdio>    
 #include <limits.h>
 #include <array>  
-
 
 sgx_enclave_id_t global_eid = 0;
 
@@ -47,56 +47,70 @@ bool load_sealed_data(const std::string& filename, std::vector<uint8_t>& sealed_
     return true;
 }
 
-
-
 bool validate_reference_data(const std::vector<uint8_t>& sealed_data) {
     printf("Validating reference data of size: %zu bytes\n", sealed_data.size());
-    if (sealed_data.size() != sizeof(ReferenceVectors)) {
-        printf("Invalid reference vectors file size. Expected: %zu, Got: %zu\n", 
-               sizeof(ReferenceVectors), sealed_data.size());
+
+    // Check minimum size for header (version + count)
+    if (sealed_data.size() < sizeof(uint32_t) * 2) {
+        printf("Invalid reference vectors file size. Too small for header.\n");
         return false;
     }
 
-    const auto* data = reinterpret_cast<const ReferenceVectors*>(sealed_data.data());
-    printf("Reference data version: %u\n", data->version);
-    printf("Reference vector count: %u\n", data->count);
+    // Read version and count
+    uint32_t version, count;
+    memcpy(&version, sealed_data.data(), sizeof(uint32_t));
+    memcpy(&count, sealed_data.data() + sizeof(uint32_t), sizeof(uint32_t));
 
-    if (data->version != CURRENT_VERSION) {
+    // Calculate expected size
+    size_t expected_size = (sizeof(uint32_t) * 2) + (count * sizeof(vector_t));
+
+    printf("Reference data version: %u\n", version);
+    printf("Reference vector count: %u\n", count);
+    printf("Expected size: %zu, Got: %zu\n", expected_size, sealed_data.size());
+
+    if (version != CURRENT_VERSION) {
         printf("Invalid reference data version. Expected: %d, Got: %u\n", 
-               CURRENT_VERSION, data->version);
+               CURRENT_VERSION, version);
         return false;
     }
 
-    if (data->count == 0 || data->count > MAX_VECTORS) {
+    if (count == 0 || count > MAX_VECTORS) {
         printf("Invalid reference vector count. Must be between 1 and %d\n", MAX_VECTORS);
+        return false;
+    }
+
+    if (sealed_data.size() != expected_size) {
+        printf("Invalid reference vectors file size. Expected: %zu, Got: %zu\n", 
+               expected_size, sealed_data.size());
         return false;
     }
 
     return true;
 }
 
-
 bool validate_query_data(const std::vector<uint8_t>& sealed_data) {
     if (sealed_data.size() != sizeof(QueryVector)) {
-        printf("Invalid query vector file size\n");
+        printf("Invalid query vector file size. Expected: %zu, Got: %zu\n",
+               sizeof(QueryVector), sealed_data.size());
         return false;
     }
 
     const auto* data = reinterpret_cast<const QueryVector*>(sealed_data.data());
     if (data->version != CURRENT_VERSION) {
-        printf("Invalid query data version\n");
+        printf("Invalid query data version. Expected: %d, Got: %u\n",
+               CURRENT_VERSION, data->version);
         return false;
     }
 
     if (data->count != 1) {
-        printf("Invalid query vector count (should be 1)\n");
+        printf("Invalid query vector count. Expected: 1, Got: %u\n", data->count);
         return false;
     }
 
     return true;
 }
 
-int main(void)  // Changed signature since argc/argv aren't used
+int main(void)
 {
     if (initialize_enclave() < 0) {
         printf("Enclave initialization failed.\n");
@@ -114,7 +128,6 @@ int main(void)  // Changed signature since argc/argv aren't used
     // Initialize reference vectors in enclave
     sgx_status_t ret_status;
     printf("Attempting to initialize enclave with %zu bytes of sealed data\n", sealed_data.size());
-    printf("Expected ReferenceVectors size: %zu bytes\n", sizeof(ReferenceVectors));
 
     sgx_status_t status = ecall_initialize_reference_vectors(
         global_eid,
@@ -181,7 +194,8 @@ int main(void)  // Changed signature since argc/argv aren't used
         printf("Error: Invalid similarity value: %f\n", similarity);
     }
 
-
+    // Cleanup
+    ecall_cleanup_reference_vectors(global_eid);
     sgx_destroy_enclave(global_eid);
     return 0;
 }

@@ -13,7 +13,8 @@ void print_usage() {
               << "  --max <value>                              Maximum value (default: 1.0)\n"
               << "  --mean <value>                             Mean for Gaussian (default: 0.0)\n"
               << "  --stddev <value>                           StdDev for Gaussian (default: 1.0)\n"
-              << "  --seed <value>                             Random seed (default: time-based)\n";
+              << "  --seed <value>                             Random seed (default: time-based)\n"
+              << "\nMaximum number of vectors: " << MAX_VECTORS << "\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -54,7 +55,13 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
         }
-        else if (arg == "--count") config.num_vectors = std::stoul(argv[i + 1]);
+        else if (arg == "--count") {
+            config.num_vectors = std::stoul(argv[i + 1]);
+            if (config.num_vectors > MAX_VECTORS) {
+                std::cerr << "Warning: Count exceeds maximum. Limiting to " << MAX_VECTORS << std::endl;
+                config.num_vectors = MAX_VECTORS;
+            }
+        }
         else if (arg == "--min") config.min_value = std::stof(argv[i + 1]);
         else if (arg == "--max") config.max_value = std::stof(argv[i + 1]);
         else if (arg == "--mean") config.mean = std::stof(argv[i + 1]);

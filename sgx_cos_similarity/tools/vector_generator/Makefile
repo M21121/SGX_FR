@@ -1,20 +1,20 @@
 # tools/vector_generator/Makefile
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+CXXFLAGS = -Wall -Wextra -std=c++17 -I../../
 
-SRCS = main.cpp vector_generator.cpp
-OBJS = $(SRCS:.cpp=.o)
+SOURCES = main.cpp vector_generator.cpp
+OBJECTS = $(SOURCES:.cpp=.o)
 TARGET = vector_generator
-
-.PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(OBJS) -o $(TARGET)
+$(TARGET): $(OBJECTS)
+	$(CXX) $(OBJECTS) -o $(TARGET)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET)
+
+.PHONY: all clean

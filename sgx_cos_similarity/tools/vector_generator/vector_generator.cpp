@@ -6,6 +6,11 @@
 #include <iomanip>
 
 VectorGenerator::VectorGenerator(const GeneratorConfig& config) : config_(config) {
+    if (config_.num_vectors > MAX_VECTORS) {
+        std::cerr << "Warning: Number of vectors exceeds maximum (" << MAX_VECTORS 
+                  << "). Limiting to maximum.\n";
+        config_.num_vectors = MAX_VECTORS;
+    }
 }
 
 vector_t VectorGenerator::generate_random_vector() {

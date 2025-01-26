@@ -4,14 +4,11 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include "../common/shared_types.h"  // Add this include for CURRENT_VERSION and MAX_VECTORS
+#include <stdlib.h>
+#include "../common/shared_types.h"
 
-// Remove these as they're now defined in shared_types.h
-// #define VECTOR_DIM 512
-// typedef std::array<float, VECTOR_DIM> vector_t
-
-// Use the ReferenceVectors struct from shared_types.h
-static ReferenceVectors g_reference_vectors;
+// Static enclave data
+static ReferenceVectors* g_reference_vectors = nullptr;
 static bool g_is_initialized = false;
 
 // Helper functions
@@ -46,36 +43,64 @@ static bool is_effectively_zero(float value) {
 
 sgx_status_t ecall_initialize_reference_vectors(const uint8_t* sealed_data, size_t sealed_size)
 {
-    if (!sealed_data || sealed_size != sizeof(ReferenceVectors)) {
+    if (!sealed_data || sealed_size < sizeof(uint32_t) * 2) {
         return SGX_ERROR_INVALID_PARAMETER;
     }
 
-    // Check if we have enough memory
-    if (sealed_size > UINT32_MAX) {
+    // First read version and count
+    uint32_t version, count;
+    memcpy(&version, sealed_data, sizeof(uint32_t));
+    memcpy(&count, sealed_data + sizeof(uint32_t), sizeof(uint32_t));
+
+    if (version != CURRENT_VERSION || count == 0 || count > MAX_VECTORS) {
         return SGX_ERROR_INVALID_PARAMETER;
     }
 
-    // Verify the data before copying
-    const ReferenceVectors* temp_ref = reinterpret_cast<const ReferenceVectors*>(sealed_data);
-    if (temp_ref->version != CURRENT_VERSION || 
-        temp_ref->count == 0 || 
-        temp_ref->count > MAX_VECTORS) {
+    // Calculate total required size
+    size_t required_size = sizeof(uint32_t) * 2 + (count * sizeof(vector_t));
+    if (sealed_size != required_size) {
         return SGX_ERROR_INVALID_PARAMETER;
     }
 
-    // Use try-catch to handle potential memory issues
+    // Clean up any existing data
+    if (g_reference_vectors) {
+        if (g_reference_vectors->vectors) {
+            delete[] g_reference_vectors->vectors;
+        }
+        delete g_reference_vectors;
+        g_reference_vectors = nullptr;
+    }
+
+    // Allocate memory for the reference vectors
     try {
-        memcpy(&g_reference_vectors, sealed_data, sealed_size);
+        g_reference_vectors = new ReferenceVectors();
+        g_reference_vectors->version = version;
+        g_reference_vectors->count = count;
+        g_reference_vectors->vectors = new vector_t[count];
+
+        // Copy the vectors data
+        memcpy(g_reference_vectors->vectors, 
+               sealed_data + (sizeof(uint32_t) * 2), 
+               count * sizeof(vector_t));
+
         g_is_initialized = true;
         return SGX_SUCCESS;
     } catch (...) {
+        if (g_reference_vectors) {
+            if (g_reference_vectors->vectors) {
+                delete[] g_reference_vectors->vectors;
+            }
+            delete g_reference_vectors;
+            g_reference_vectors = nullptr;
+        }
+        g_is_initialized = false;
         return SGX_ERROR_OUT_OF_MEMORY;
     }
 }
 
 float ecall_compute_cosine_similarity(const float* query_vector)
 {
-    if (!g_is_initialized || !query_vector) {
+    if (!g_is_initialized || !query_vector || !g_reference_vectors) {
         return -2.0f; // Error value
     }
 
@@ -86,11 +111,11 @@ float ecall_compute_cosine_similarity(const float* query_vector)
 
     float max_similarity = -1.0f;
 
-    for (uint32_t i = 0; i < g_reference_vectors.count; i++) {
-        float ref_magnitude = compute_vector_magnitude(g_reference_vectors.vectors[i]);
+    for (uint32_t i = 0; i < g_reference_vectors->count; i++) {
+        float ref_magnitude = compute_vector_magnitude(g_reference_vectors->vectors[i]);
         if (is_effectively_zero(ref_magnitude)) continue; // Skip zero vectors
 
-        float dot_product = compute_dot_product(query_vector, g_reference_vectors.vectors[i]);
+        float dot_product = compute_dot_product(query_vector, g_reference_vectors->vectors[i]);
         float similarity = dot_product / (query_magnitude * ref_magnitude);
 
         if (similarity > max_similarity) {
@@ -99,4 +124,16 @@ float ecall_compute_cosine_similarity(const float* query_vector)
     }
 
     return max_similarity;
+}
+
+void ecall_cleanup_reference_vectors()
+{
+    if (g_reference_vectors) {
+        if (g_reference_vectors->vectors) {
+            delete[] g_reference_vectors->vectors;
+        }
+        delete g_reference_vectors;
+        g_reference_vectors = nullptr;
+    }
+    g_is_initialized = false;
 }

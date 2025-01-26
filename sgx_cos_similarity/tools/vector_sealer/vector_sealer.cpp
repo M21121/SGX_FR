@@ -52,13 +52,9 @@ bool seal_reference_vectors(const std::string& output_file, const std::vector<ve
         return false;
     }
 
-    ReferenceVectors ref_data = {};  // Zero-initialize
-    ref_data.version = CURRENT_VERSION;
-    ref_data.count = vectors.size();
-
-    for (size_t i = 0; i < vectors.size(); i++) {
-        ref_data.vectors[i] = vectors[i];
-    }
+    // Write header and vectors separately
+    uint32_t version = CURRENT_VERSION;
+    uint32_t count = vectors.size();
 
     std::ofstream file(output_file, std::ios::binary);
     if (!file) {
@@ -66,7 +62,19 @@ bool seal_reference_vectors(const std::string& output_file, const std::vector<ve
         return false;
     }
 
-    file.write(reinterpret_cast<const char*>(&ref_data), sizeof(ReferenceVectors));
+    // Write version and count
+    file.write(reinterpret_cast<const char*>(&version), sizeof(uint32_t));
+    file.write(reinterpret_cast<const char*>(&count), sizeof(uint32_t));
+
+    // Write vectors
+    for (const auto& vec : vectors) {
+        file.write(reinterpret_cast<const char*>(vec.data()), sizeof(vector_t));
+    }
+
+    std::cout << "Sealed " << count << " vectors (" 
+              << (sizeof(uint32_t) * 2 + count * sizeof(vector_t)) 
+              << " bytes) to " << output_file << "\n";
+
     return true;
 }
 
@@ -83,6 +91,8 @@ bool seal_query_vector(const std::string& output_file, const vector_t& vector) {
     }
 
     file.write(reinterpret_cast<const char*>(&query_data), sizeof(QueryVector));
+    std::cout << "Sealed query vector (" << sizeof(QueryVector) << " bytes) to " 
+              << output_file << "\n";
     return true;
 }
 
@@ -103,8 +113,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (seal_reference_vectors(output_file, vectors)) {
-            std::cout << "Reference vectors sealed successfully to " << output_file << "\n";
-            std::cout << "Number of vectors: " << vectors.size() << "\n";
+            std::cout << "Reference vectors sealed successfully\n";
             return 0;
         }
     } 
@@ -120,7 +129,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (seal_query_vector(output_file, vectors[0])) {
-            std::cout << "Query vector sealed successfully to " << output_file << "\n";
+            std::cout << "Query vector sealed successfully\n";
             return 0;
         }
     }
