@@ -1,0 +1,67 @@
+# SGX specific
+*.signed.so
+*.signed.dll
+*.signed.exe
+*.unsigned.so
+*.unsigned.dll
+*.unsigned.exe
+Enclave_u.*
+Enclave_t.*
+
+# Sealed data files
+tools/sealed_data/*.dat
+
+# Build artifacts
+*.o
+*.so
+*.a
+*.lib
+*.dll
+*.exe
+*.out
+
+# Generated files
+App/Enclave_u.c
+App/Enclave_u.h
+Enclave/Enclave_t.c
+Enclave/Enclave_t.h
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Text files (if you want to ignore them)
+*.txt
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Make artifacts
+.depend
+.deps/
+.libs/
+
+# Custom binary output directories (if you have any)
+bin/
+build/
+obj/

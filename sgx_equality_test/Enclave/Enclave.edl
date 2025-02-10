@@ -1,11 +1,12 @@
 enclave {
-    from "sgx_tstdc.edl" import *;
-
     trusted {
+        public sgx_status_t ecall_initialize_secret_data([in, size=sealed_size] const uint8_t* sealed_data, size_t sealed_size);
         public int ecall_check_number(int number);
-        public sgx_status_t ecall_initialize_secret_data(
-            [in, size=sealed_size] const uint8_t* sealed_data, 
-            size_t sealed_size
-        );
+        public sgx_status_t ecall_get_page_fault_count([out] uint64_t* count);
+        public void ecall_cleanup(void);
+    };
+
+    untrusted {
+        /* Define any ocalls here if needed */
     };
 };
