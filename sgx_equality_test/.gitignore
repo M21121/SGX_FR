@@ -65,3 +65,7 @@ Thumbs.db
 bin/
 build/
 obj/
+
+# Key files
+*.key
+*.pem

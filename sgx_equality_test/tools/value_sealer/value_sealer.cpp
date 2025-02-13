@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -6,35 +7,104 @@
 #include <cstdint>
 #include <memory>
 #include <sstream>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/aes.h>
+#include "../../common/shared_types.h"  // This now provides SecretData and TestData structs
 
-struct SecretData {
-    uint32_t version;
-    uint32_t count;
-    int values[33554432];  // 2^25 numbers
-};
-
-struct TestData {
-    uint32_t version;
-    uint32_t count;
-    int values[33554432];  // 2^25 numbers
-};
+#define AES_KEY_SIZE 16  // 128 bits for AES-CTR
+#define AES_BLOCK_SIZE 16
 
 void print_usage() {
     std::cout << "Usage: value_sealer [seal|seal-tests] output_file input_file\n";
     std::cout << "  seal       - Seal secret values to a file\n";
-    std::cout << "  seal-tests - Seal test values to a file\n";
+    std::cout << "  seal-tests - Seal and encrypt test values to a file\n";
     std::cout << "  output_file - Path to the output sealed data file\n";
     std::cout << "  input_file  - Path to the input text file containing numbers\n";
-    std::cout << "Maximum supported values: 33,554,432\n";
+    std::cout << "Maximum supported values: " << MAX_VALUES << "\n";
     std::cout << "\nExample:\n";
     std::cout << "  ./value_sealer seal secret.dat numbers.txt\n";
     std::cout << "  ./value_sealer seal-tests test.dat test_numbers.txt\n";
+}
+bool read_or_generate_key(unsigned char* key, unsigned char* counter) {
+    std::ifstream keyfile("aes.key", std::ios::binary);
+    if (keyfile) {
+        // Read existing key and counter
+        keyfile.read(reinterpret_cast<char*>(key), AES_KEY_SIZE);
+        keyfile.read(reinterpret_cast<char*>(counter), AES_BLOCK_SIZE);
+        keyfile.close();
+        std::cout << "Using existing AES key from 'aes.key'\n";
+        return true;
+    }
+
+    // Generate random key
+    if (RAND_bytes(key, AES_KEY_SIZE) != 1) {
+        std::cerr << "Error: Failed to generate AES key\n";
+        return false;
+    }
+
+    // Generate random counter
+    if (RAND_bytes(counter, AES_BLOCK_SIZE) != 1) {
+        std::cerr << "Error: Failed to generate counter\n";
+        return false;
+    }
+
+    // Save key and counter for later use by the enclave
+    std::ofstream newkeyfile("aes.key", std::ios::binary);
+    if (!newkeyfile) {
+        std::cerr << "Error: Failed to create key file\n";
+        return false;
+    }
+    newkeyfile.write(reinterpret_cast<char*>(key), AES_KEY_SIZE);
+    newkeyfile.write(reinterpret_cast<char*>(counter), AES_BLOCK_SIZE);
+    newkeyfile.close();
+
+    std::cout << "Generated and saved new AES key and counter to 'aes.key'\n";
+    return true;
+}
+
+bool encrypt_data(const uint8_t* input, size_t input_size,
+                 std::vector<uint8_t>& output,
+                 const unsigned char* key,
+                 const unsigned char* counter) {
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        std::cerr << "Error: Failed to create cipher context\n";
+        return false;
+    }
+
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, key, counter) != 1) {
+        std::cerr << "Error: Failed to initialize encryption\n";
+        EVP_CIPHER_CTX_free(ctx);
+        return false;
+    }
+
+    output.resize(input_size + EVP_MAX_BLOCK_LENGTH);
+    int encrypted_length = 0;
+    int final_length = 0;
+
+    if (EVP_EncryptUpdate(ctx, output.data(), &encrypted_length,
+                         input, input_size) != 1) {
+        std::cerr << "Error: Failed to encrypt data\n";
+        EVP_CIPHER_CTX_free(ctx);
+        return false;
+    }
+
+    if (EVP_EncryptFinal_ex(ctx, output.data() + encrypted_length, &final_length) != 1) {
+        std::cerr << "Error: Failed to finalize encryption\n";
+        EVP_CIPHER_CTX_free(ctx);
+        return false;
+    }
+
+    EVP_CIPHER_CTX_free(ctx);
+    output.resize(encrypted_length + final_length);
+    return true;
 }
 
 bool read_numbers_from_file(const std::string& filename, std::vector<int>& numbers) {
     std::ifstream file(filename);
     if (!file) {
-        std::cerr << "Error: Cannot open input file: " << filename << "\n";
+        std::cerr << "Error: Number of values exceeds maximum limit of " << MAX_VALUES << "\n";
         return false;
     }
 
@@ -45,12 +115,10 @@ bool read_numbers_from_file(const std::string& filename, std::vector<int>& numbe
     while (std::getline(file, line)) {
         line_number++;
 
-        // Skip empty lines and comments
         if (line.empty() || line[0] == '#' || line[0] == '/') {
             continue;
         }
 
-        // Remove leading/trailing whitespace
         line.erase(0, line.find_first_not_of(" \t\r\n"));
         line.erase(line.find_last_not_of(" \t\r\n") + 1);
 
@@ -64,13 +132,12 @@ bool read_numbers_from_file(const std::string& filename, std::vector<int>& numbe
         while (iss >> number) {
             numbers.push_back(number);
 
-            if (numbers.size() > 33554432) {
-                std::cerr << "Error: Number of values exceeds maximum limit of 33,554,432\n";
+            if (numbers.size() > MAX_VALUES) {
+                std::cerr << "Error: Number of values exceeds maximum limit of " << MAX_VALUES << "\n";
                 return false;
             }
         }
 
-        // Check if the line was parsed successfully
         if (iss.fail() && !iss.eof()) {
             std::cerr << "Error: Invalid number format at line " << line_number << ": " << line << "\n";
             return false;
@@ -88,10 +155,9 @@ bool read_numbers_from_file(const std::string& filename, std::vector<int>& numbe
 
 bool seal_values(const std::string& output_file, const std::vector<int>& values) {
     try {
-        auto secret_data = std::make_unique<SecretData>();
+        std::unique_ptr<SecretData> secret_data(new SecretData());
         secret_data->version = 1;
 
-        // Sort values and remove duplicates
         std::vector<int> sorted_values = values;
         std::sort(sorted_values.begin(), sorted_values.end());
         sorted_values.erase(
@@ -106,12 +172,10 @@ bool seal_values(const std::string& output_file, const std::vector<int>& values)
 
         secret_data->count = static_cast<uint32_t>(sorted_values.size());
 
-        // Copy sorted unique values
         for (size_t i = 0; i < sorted_values.size(); i++) {
             secret_data->values[i] = sorted_values[i];
         }
 
-        // Write to file
         std::ofstream file(output_file, std::ios::binary);
         if (!file) {
             std::cerr << "Error: Failed to create output file: " << output_file << "\n";
@@ -138,23 +202,43 @@ bool seal_values(const std::string& output_file, const std::vector<int>& values)
 
 bool seal_test_values(const std::string& output_file, const std::vector<int>& values) {
     try {
-        auto test_data = std::make_unique<TestData>();
+        std::unique_ptr<TestData> test_data(new TestData());
         test_data->version = 1;
         test_data->count = static_cast<uint32_t>(values.size());
 
-        // Copy values directly (no sorting/deduplication for test values)
         for (size_t i = 0; i < values.size(); i++) {
             test_data->values[i] = values[i];
         }
 
-        // Write to file
+        // Use existing key or generate new one if it doesn't exist
+        unsigned char key[AES_KEY_SIZE];
+        unsigned char counter[AES_BLOCK_SIZE];
+        if (!read_or_generate_key(key, counter)) {
+            return false;
+        }
+
+        // Encrypt the test data
+        std::vector<uint8_t> encrypted_data;
+        if (!encrypt_data(reinterpret_cast<const uint8_t*>(test_data.get()),
+                         sizeof(TestData),
+                         encrypted_data,
+                         key,
+                         counter)) {
+            return false;
+        }
+
+        // Write to file: counter + encrypted data
         std::ofstream file(output_file, std::ios::binary);
         if (!file) {
             std::cerr << "Error: Failed to create output file: " << output_file << "\n";
             return false;
         }
 
-        file.write(reinterpret_cast<const char*>(test_data.get()), sizeof(TestData));
+        // Write counter first
+        file.write(reinterpret_cast<const char*>(counter), AES_BLOCK_SIZE);
+
+        // Write encrypted data
+        file.write(reinterpret_cast<const char*>(encrypted_data.data()), encrypted_data.size());
 
         if (!file) {
             std::cerr << "Error: Failed to write to output file\n";
@@ -162,7 +246,7 @@ bool seal_test_values(const std::string& output_file, const std::vector<int>& va
         }
 
         file.close();
-        std::cout << "Successfully sealed " << values.size() 
+        std::cout << "Successfully sealed and encrypted " << values.size() 
                  << " test values to " << output_file << "\n";
         return true;
     }

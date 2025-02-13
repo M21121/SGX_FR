@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#define MAX_VALUES 33554432  // Changed from 1024 to 33554432
+#define MAX_VALUES 2097152  // 2^21
 #define CURRENT_VERSION 1
 
 struct SecretData {

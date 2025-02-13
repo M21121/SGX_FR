@@ -1,12 +1,21 @@
+// Enclave.edl
 enclave {
+    from "sgx_tstdc.edl" import *;
+
     trusted {
-        public sgx_status_t ecall_initialize_secret_data([in, size=sealed_size] const uint8_t* sealed_data, size_t sealed_size);
         public int ecall_check_number(int number);
+        public sgx_status_t ecall_initialize_secret_data([in, size=sealed_size] const uint8_t* sealed_data, size_t sealed_size);
         public sgx_status_t ecall_get_page_fault_count([out] uint64_t* count);
-        public void ecall_cleanup(void);
-    };
+        public sgx_status_t ecall_decrypt_test_data(
+            [in, size=encrypted_size] const uint8_t* encrypted_data, size_t encrypted_size,
+            [out, size=decrypted_size] uint8_t* decrypted_data, size_t decrypted_size);
+        public sgx_status_t ecall_initialize_aes_key(
+            [in, size=key_size] const uint8_t* key_data, size_t key_size);
+        public void ecall_cleanup();
+        public sgx_status_t ecall_update_counter([in, size=16] const uint8_t* counter, size_t counter_size);};
 
     untrusted {
-        /* Define any ocalls here if needed */
+        void ocall_print_string([in, string] const char* str);
+        void ocall_print_error([in, string] const char* str);
     };
 };

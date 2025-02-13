@@ -37,7 +37,7 @@ App_Include_Paths := -IApp -I$(SGX_SDK)/include -Icommon
 App_C_Flags := -fPIC -Wno-attributes $(App_Include_Paths)
 App_Cpp_Flags := $(App_C_Flags) -std=c++11
 
-App_Link_Flags := -L$(SGX_LIBRARY_PATH) -lsgx_urts -lpthread
+App_Link_Flags := -L$(SGX_LIBRARY_PATH) -lsgx_urts -lpthread -lssl -lcrypto
 
 App_C_Objects := $(App_C_Files:.c=.o)
 App_Cpp_Objects := $(App_Cpp_Files:.cpp=.o)
@@ -56,14 +56,17 @@ endif
 Crypto_Library_Name := sgx_tcrypto
 
 Enclave_Cpp_Files := Enclave/Enclave.cpp
-Enclave_Include_Paths := -IEnclave -I$(SGX_SDK)/include -I$(SGX_SDK)/include/tlibc -I$(SGX_SDK)/include/libcxx
+Enclave_Include_Paths := -I$(SGX_SDK)/include \
+						-I$(SGX_SDK)/include/tlibc \
+						-I$(SGX_SDK)/include/libcxx \
+						-I../common
 
 Enclave_C_Flags := $(SGX_COMMON_FLAGS) -nostdinc -fvisibility=hidden -fpie -ffunction-sections -fdata-sections $(Enclave_Include_Paths)
 Enclave_Cpp_Flags := $(Enclave_C_Flags) -std=c++11 -nostdinc++
 
 Enclave_Link_Flags := $(SGX_COMMON_FLAGS) -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles -L$(SGX_LIBRARY_PATH) \
 	-Wl,--whole-archive -l$(Trts_Library_Name) -Wl,--no-whole-archive \
-	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -l$(Crypto_Library_Name) -l$(Service_Library_Name) -Wl,--end-group \
+	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -l$(Crypto_Library_Name) -l$(Service_Library_Name) -lsgx_tcrypto -Wl,--end-group \
 	-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
 	-Wl,-pie,-eenclave_entry -Wl,--export-dynamic \
 	-Wl,--defsym,__ImageBase=0 -Wl,--gc-sections
