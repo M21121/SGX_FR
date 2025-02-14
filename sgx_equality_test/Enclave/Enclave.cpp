@@ -214,6 +214,37 @@ int ecall_check_number(int number) {
     return 0;  // No match found
 }
 
+sgx_status_t ecall_check_number_encrypted(int number, uint8_t* encrypted_result, 
+                                         size_t result_size) {
+    if (!g_is_initialized || !g_secret_data || !encrypted_result || 
+        result_size < AES_BLOCK_SIZE) {
+        return SGX_ERROR_INVALID_PARAMETER;
+    }
+
+    // Get the intersection check result
+    int result = ecall_check_number(number);
+
+    // Convert result to byte for encryption
+    uint8_t bool_result = (result == 1) ? 1 : 0;
+
+    // Ensure proper alignment
+    alignas(16) uint8_t aligned_key[AES_KEY_SIZE];
+    alignas(16) uint8_t aligned_ctr[AES_BLOCK_SIZE];
+
+    memcpy(aligned_key, g_aes_key, AES_KEY_SIZE);
+    memcpy(aligned_ctr, g_aes_counter, AES_BLOCK_SIZE);
+
+    // Use SGX's native AES-CTR encryption
+    return sgx_aes_ctr_encrypt(
+        (const sgx_aes_ctr_128bit_key_t*)aligned_key,
+        &bool_result,
+        1,  // Only encrypting 1 byte
+        aligned_ctr,
+        128,  // Initial counter value
+        encrypted_result
+    );
+}
+
 sgx_status_t ecall_update_counter(const uint8_t* counter, size_t counter_size) {
     if (!counter || counter_size != AES_BLOCK_SIZE) {
         return SGX_ERROR_INVALID_PARAMETER;

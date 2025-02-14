@@ -12,7 +12,13 @@ enclave {
         public sgx_status_t ecall_initialize_aes_key(
             [in, size=key_size] const uint8_t* key_data, size_t key_size);
         public void ecall_cleanup();
-        public sgx_status_t ecall_update_counter([in, size=16] const uint8_t* counter, size_t counter_size);};
+        public sgx_status_t ecall_update_counter([in, size=16] const uint8_t* counter, size_t counter_size);
+        public sgx_status_t ecall_check_number_encrypted(
+            int number,
+            [out, size=result_size] uint8_t* encrypted_result,
+            size_t result_size
+        );
+    };
 
     untrusted {
         void ocall_print_string([in, string] const char* str);
