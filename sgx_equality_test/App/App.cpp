@@ -34,6 +34,8 @@ struct TestResults {
     uint64_t total_time_us;
     uint64_t processing_time_us;
     uint64_t encryption_time_us;
+    uint64_t decryption_time_us;  
+    uint64_t overhead_time_us;
     uint64_t page_faults;
 };
 
@@ -136,15 +138,17 @@ bool validate_sealed_data(const std::vector<uint8_t>& sealed_data, const char* t
 }
 
 TestResults run_test_iteration(const std::string& secret_file, const std::string& test_file) {
-    TestResults results = {0, 0, 0, 0, 0, 0, 0};  // Initialize with 0 for all fields
+    TestResults results = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     auto total_start = std::chrono::high_resolution_clock::now();
 
-    std::vector<uint8_t> secret_data;
-    if (!load_sealed_data(secret_file, secret_data, false)) {
+    sgx_status_t timing_reset_status;
+    if (ecall_reset_timing(global_eid, &timing_reset_status) != SGX_SUCCESS) {
         return results;
     }
 
-    if (!validate_sealed_data(secret_data, "secret")) {
+    std::vector<uint8_t> secret_data;
+    if (!load_sealed_data(secret_file, secret_data, false) || 
+        !validate_sealed_data(secret_data, "secret")) {
         return results;
     }
 
@@ -162,8 +166,6 @@ TestResults run_test_iteration(const std::string& secret_file, const std::string
     std::vector<uint8_t> decrypted_test_data(encrypted_test_data.size());
     sgx_status_t decrypt_ret_status;
 
-    auto processing_start = std::chrono::high_resolution_clock::now();
-
     if (ecall_decrypt_test_data(global_eid, &decrypt_ret_status,
         encrypted_test_data.data(), encrypted_test_data.size(),
         decrypted_test_data.data(), decrypted_test_data.size()) != SGX_SUCCESS) {
@@ -171,17 +173,31 @@ TestResults run_test_iteration(const std::string& secret_file, const std::string
     }
 
     const TestData* test_data = reinterpret_cast<const TestData*>(decrypted_test_data.data());
-    if (test_data->version != CURRENT_VERSION || test_data->count == 0 || test_data->count > MAX_VALUES) {
+    if (test_data->version != CURRENT_VERSION || test_data->count == 0 || 
+        test_data->count > MAX_VALUES) {
         return results;
     }
 
-    // Process each test value and count results
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        return results;
+    }
+
+    std::ifstream key_file("aes.key", std::ios::binary);
+    if (!key_file) {
+        EVP_CIPHER_CTX_free(ctx);
+        return results;
+    }
+
+    std::vector<uint8_t> key_data(AES_KEY_SIZE + AES_BLOCK_SIZE);
+    if (!key_file.read(reinterpret_cast<char*>(key_data.data()), key_data.size())) {
+        EVP_CIPHER_CTX_free(ctx);
+        return results;
+    }
+
     for (uint32_t i = 0; i < test_data->count; i++) {
         alignas(16) uint8_t encrypted_result[AES_BLOCK_SIZE];
         sgx_status_t check_ret_status;
-
-        // Measure encryption time from outside the enclave
-        auto encryption_start = std::chrono::high_resolution_clock::now();
 
         if (ecall_check_number_encrypted(global_eid, &check_ret_status,
             test_data->values[i], encrypted_result, AES_BLOCK_SIZE) != SGX_SUCCESS) {
@@ -189,55 +205,25 @@ TestResults run_test_iteration(const std::string& secret_file, const std::string
             continue;
         }
 
-        auto encryption_end = std::chrono::high_resolution_clock::now();
-        uint64_t encryption_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-            encryption_end - encryption_start).count();
-        results.encryption_time_us += encryption_duration;
-
-        // Decrypt the result
         alignas(16) uint8_t decrypted_result;
-        std::ifstream key_file("aes.key", std::ios::binary);
-        if (!key_file) {
-            results.errors++;
-            continue;
-        }
-
-        std::vector<uint8_t> key_data(AES_KEY_SIZE + AES_BLOCK_SIZE);
-        if (!key_file.read(reinterpret_cast<char*>(key_data.data()), key_data.size())) {
-            results.errors++;
-            continue;
-        }
-
-        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-        if (!ctx) {
-            results.errors++;
-            continue;
-        }
-
         if (EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, key_data.data(), 
             key_data.data() + AES_KEY_SIZE) != 1) {
-            EVP_CIPHER_CTX_free(ctx);
             results.errors++;
             continue;
         }
 
         int len;
         if (EVP_DecryptUpdate(ctx, &decrypted_result, &len, encrypted_result, 1) != 1) {
-            EVP_CIPHER_CTX_free(ctx);
             results.errors++;
             continue;
         }
 
         int final_len;
         if (EVP_DecryptFinal_ex(ctx, &decrypted_result + len, &final_len) != 1) {
-            EVP_CIPHER_CTX_free(ctx);
             results.errors++;
             continue;
         }
 
-        EVP_CIPHER_CTX_free(ctx);
-
-        // Count matches/non-matches
         if (decrypted_result == 1) {
             results.matches++;
         } else {
@@ -245,17 +231,29 @@ TestResults run_test_iteration(const std::string& secret_file, const std::string
         }
     }
 
-    auto processing_end = std::chrono::high_resolution_clock::now();
-    auto total_end = std::chrono::high_resolution_clock::now();
+    EVP_CIPHER_CTX_free(ctx);
 
-    results.processing_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        processing_end - processing_start).count();
+    uint64_t enclave_encryption_time = 0;
+    uint64_t enclave_processing_time = 0;
+    uint64_t enclave_total_time = 0;
+    uint64_t enclave_decryption_time = 0;
+
+    sgx_status_t timing_status;
+    if (ecall_get_timing_info(global_eid, &timing_status,
+                             &enclave_encryption_time,
+                             &enclave_processing_time,
+                             &enclave_total_time,
+                             &enclave_decryption_time) == SGX_SUCCESS) {
+        results.encryption_time_us = enclave_encryption_time;
+        results.processing_time_us = enclave_processing_time;
+        results.decryption_time_us = enclave_decryption_time;
+    }
+
+    auto total_end = std::chrono::high_resolution_clock::now();
     results.total_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
         total_end - total_start).count();
-
-    // Get page fault count
-    sgx_status_t pf_ret_status;
-    ecall_get_page_fault_count(global_eid, &pf_ret_status, &results.page_faults);
+    results.overhead_time_us = results.total_time_us - 
+        (results.processing_time_us + results.encryption_time_us + results.decryption_time_us);
 
     return results;
 }
@@ -266,6 +264,13 @@ void ocall_print_string(const char* str) {
 
 void ocall_print_error(const char* str) {
     printf("Error: %s\n", str);
+}
+
+uint64_t ocall_get_current_time(uint64_t* time) {
+    auto now = std::chrono::high_resolution_clock::now();
+    *time = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count();
+    return 0;
 }
 
 int main(int argc, char* argv[]) {
@@ -298,8 +303,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Print CSV header with new encryption time column
-    printf("Test,Matches,NonMatches,Errors,TotalTime_us,ProcessingTime_us,EncryptionTime_us,OverheadTime_us,PageFaults\n");
+    printf("Test,Matches,NonMatches,Errors,TotalTime_us,ProcessingTime_us,"
+           "EncryptionTime_us,DecryptionTime_us,OverheadTime_us,PageFaults\n");
 
     for (int i = 1; i <= num_iterations; i++) {
         std::string secret_file = "tools/sealed_data/secret_numbers" + std::to_string(i) + ".dat";
@@ -307,20 +312,12 @@ int main(int argc, char* argv[]) {
 
         TestResults results = run_test_iteration(secret_file, test_file);
 
-        // Print CSV formatted line with encryption time
-        printf("%d,%d,%d,%d,%lu,%lu,%lu,%lu,%lu\n",
-               i,
-               results.matches,
-               results.non_matches,
-               results.errors,
-               results.total_time_us,
-               results.processing_time_us,
-               results.encryption_time_us,
-               results.total_time_us - results.processing_time_us,
-               results.page_faults);
+        printf("%d,%d,%d,%d,%lu,%lu,%lu,%lu,%lu,%lu\n",
+            i, results.matches, results.non_matches, results.errors,
+            results.total_time_us, results.processing_time_us,
+            results.encryption_time_us, results.decryption_time_us,
+            results.overhead_time_us, results.page_faults);
     }
 
     return 0;
 }
-
-

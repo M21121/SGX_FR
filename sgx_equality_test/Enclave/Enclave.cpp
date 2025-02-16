@@ -22,6 +22,16 @@ static uint8_t g_aes_key[AES_KEY_SIZE];
 static uint8_t g_aes_counter[AES_BLOCK_SIZE];
 static bool g_aes_initialized = false;
 
+struct TimingInfo {
+    uint64_t start_time;
+    uint64_t encryption_time;
+    uint64_t decryption_time;
+    uint64_t processing_time;
+    uint64_t total_time;
+};
+
+static TimingInfo g_timing = {0, 0, 0, 0, 0};
+
 // Helper function to get minimum of two values
 static inline size_t min_size_t(size_t a, size_t b) {
     return (a < b) ? a : b;
@@ -132,6 +142,13 @@ sgx_status_t ecall_decrypt_test_data(const uint8_t* encrypted_data, size_t encry
         return SGX_ERROR_INVALID_PARAMETER;
     }
 
+    // Start timing decryption
+    uint64_t decrypt_start;
+    uint64_t retval;
+    if (ocall_get_current_time(&retval, &decrypt_start) != SGX_SUCCESS) {
+        return SGX_ERROR_UNEXPECTED;
+    }
+
     // Ensure 16-byte alignment
     alignas(16) uint8_t aligned_key[AES_KEY_SIZE];
     alignas(16) uint8_t aligned_ctr[AES_BLOCK_SIZE];
@@ -164,6 +181,13 @@ sgx_status_t ecall_decrypt_test_data(const uint8_t* encrypted_data, size_t encry
         offset += chunk;
     }
 
+    // End timing decryption
+    uint64_t current_time;
+    if (ocall_get_current_time(&retval, &current_time) != SGX_SUCCESS) {
+        return SGX_ERROR_UNEXPECTED;
+    }
+    g_timing.decryption_time = current_time - decrypt_start;
+
     // Verify decrypted data
     const TestData* test_data = (const TestData*)decrypted_data;
     if (test_data->version != CURRENT_VERSION) {
@@ -179,41 +203,6 @@ sgx_status_t ecall_decrypt_test_data(const uint8_t* encrypted_data, size_t encry
     return SGX_SUCCESS;
 }
 
-int ecall_check_number(int number) {
-    if (!g_is_initialized || !g_secret_data) {
-        return -1;
-    }
-
-    if (g_secret_data->count == 0) {
-        return -2;  // Error: empty data
-    }
-
-    // Binary search with page fault tracking
-    int left = 0;
-    int right = g_secret_data->count - 1;
-
-    while (left <= right) {
-        int mid = left + (right - left) / 2;
-
-        // Track page faults and ensure memory access is within enclave
-        if (sgx_is_within_enclave(&g_secret_data->values[mid], sizeof(int))) {
-            g_page_fault_count++;
-        }
-
-        // Cache-friendly comparison
-        int mid_value = g_secret_data->values[mid];
-        if (mid_value == number) {
-            return 1;  // Match found
-        }
-        if (mid_value < number) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
-        }
-    }
-    return 0;  // No match found
-}
-
 sgx_status_t ecall_check_number_encrypted(int number, uint8_t* encrypted_result, 
                                          size_t result_size) {
     if (!g_is_initialized || !g_secret_data || !encrypted_result || 
@@ -221,11 +210,32 @@ sgx_status_t ecall_check_number_encrypted(int number, uint8_t* encrypted_result,
         return SGX_ERROR_INVALID_PARAMETER;
     }
 
+    // Start total timing
+    uint64_t retval;
+    uint64_t start_time;
+    if (ocall_get_current_time(&retval, &start_time) != SGX_SUCCESS) {
+        return SGX_ERROR_UNEXPECTED;
+    }
+    g_timing.start_time = start_time;
+
     // Get the intersection check result
     int result = ecall_check_number(number);
 
+    // End processing timing
+    uint64_t process_end_time;
+    if (ocall_get_current_time(&retval, &process_end_time) != SGX_SUCCESS) {
+        return SGX_ERROR_UNEXPECTED;
+    }
+    g_timing.processing_time += process_end_time - start_time;
+
     // Convert result to byte for encryption
     uint8_t bool_result = (result == 1) ? 1 : 0;
+
+    // Start encryption timing
+    uint64_t encryption_start;
+    if (ocall_get_current_time(&retval, &encryption_start) != SGX_SUCCESS) {
+        return SGX_ERROR_UNEXPECTED;
+    }
 
     // Ensure proper alignment
     alignas(16) uint8_t aligned_key[AES_KEY_SIZE];
@@ -235,7 +245,7 @@ sgx_status_t ecall_check_number_encrypted(int number, uint8_t* encrypted_result,
     memcpy(aligned_ctr, g_aes_counter, AES_BLOCK_SIZE);
 
     // Use SGX's native AES-CTR encryption
-    return sgx_aes_ctr_encrypt(
+    sgx_status_t ret = sgx_aes_ctr_encrypt(
         (const sgx_aes_ctr_128bit_key_t*)aligned_key,
         &bool_result,
         1,  // Only encrypting 1 byte
@@ -243,6 +253,43 @@ sgx_status_t ecall_check_number_encrypted(int number, uint8_t* encrypted_result,
         128,  // Initial counter value
         encrypted_result
     );
+
+    // End encryption and total timing
+    uint64_t current_time;
+    if (ocall_get_current_time(&retval, &current_time) != SGX_SUCCESS) {
+        return SGX_ERROR_UNEXPECTED;
+    }
+
+    g_timing.encryption_time += current_time - encryption_start;
+    g_timing.total_time = current_time - g_timing.start_time;
+
+    return ret;
+}
+
+int ecall_check_number(int number) {
+    if (!g_is_initialized || !g_secret_data) {
+        return -1;
+    }
+
+    if (g_secret_data->count == 0) {
+        return -2;  // Error: empty data
+    }
+
+    // Linear search with page fault tracking
+    for (int i = 0; i < g_secret_data->count; i++) {
+        // Track page faults and ensure memory access is within enclave
+        if (sgx_is_within_enclave(&g_secret_data->values[i], sizeof(int))) {
+            g_page_fault_count++;
+        }
+
+        // Cache-friendly comparison
+        int current_value = g_secret_data->values[i];
+        if (current_value == number) {
+            return 1;  // Match found
+        }
+    }
+
+    return 0;  // No match found
 }
 
 sgx_status_t ecall_update_counter(const uint8_t* counter, size_t counter_size) {
@@ -259,6 +306,27 @@ sgx_status_t ecall_get_page_fault_count(uint64_t* count) {
         return SGX_ERROR_INVALID_PARAMETER;
     }
     *count = g_page_fault_count;
+    return SGX_SUCCESS;
+}
+
+sgx_status_t ecall_get_timing_info(uint64_t* encryption_time, 
+                                  uint64_t* processing_time,
+                                  uint64_t* total_time,
+                                  uint64_t* decryption_time) {
+    if (!encryption_time || !processing_time || !total_time || !decryption_time) {
+        return SGX_ERROR_INVALID_PARAMETER;
+    }
+
+    *encryption_time = g_timing.encryption_time;
+    *processing_time = g_timing.processing_time;
+    *decryption_time = g_timing.decryption_time;
+    *total_time = g_timing.total_time;
+
+    return SGX_SUCCESS;
+}
+
+sgx_status_t ecall_reset_timing() {
+    memset(&g_timing, 0, sizeof(TimingInfo));
     return SGX_SUCCESS;
 }
 

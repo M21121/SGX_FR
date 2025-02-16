@@ -18,10 +18,18 @@ enclave {
             [out, size=result_size] uint8_t* encrypted_result,
             size_t result_size
         );
+        public sgx_status_t ecall_reset_timing();
+        public sgx_status_t ecall_get_timing_info(
+            [out] uint64_t* encryption_time,
+            [out] uint64_t* processing_time,
+            [out] uint64_t* total_time,
+            [out] uint64_t* decryption_time
+        );
     };
 
     untrusted {
         void ocall_print_string([in, string] const char* str);
         void ocall_print_error([in, string] const char* str);
+        uint64_t ocall_get_current_time([out] uint64_t* time);
     };
 };

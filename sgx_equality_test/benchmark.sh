@@ -18,7 +18,7 @@ mkdir -p "$RESULTS_DIR"
 
 # Create summary stats file
 SUMMARY_FILE="${RESULTS_DIR}/summary.csv"
-echo "Size,Avg_TotalTime_ms,Avg_ProcessingTime_ms,Avg_EncryptionTime_ms,Avg_OverheadTime_ms,Avg_PageFaults" > "$SUMMARY_FILE"
+echo "Size,Avg_DecryptionTime_ms,Avg_IntersectionTime_ms,Avg_IntersectionResult,Avg_EncryptionTime_ms,Avg_TotalRuntime_ms" > "$SUMMARY_FILE"
 
 # Clean and build the project
 log "Cleaning previous build..."
@@ -40,49 +40,37 @@ for size in "${SIZES[@]}"; do
 
     # Create detailed results file for this size
     DETAIL_FILE="${RESULTS_DIR}/size_${size}.csv"
-    echo "Test,Matches,NonMatches,Errors,TotalTime_ms,ProcessingTime_ms,EncryptionTime_ms,OverheadTime_ms,PageFaults" > "$DETAIL_FILE"
+    echo "Test,DecryptionTime_ms,IntersectionTime_ms,IntersectionResult,EncryptionTime_ms,TotalRuntime_ms" > "$DETAIL_FILE"
 
-    # Run the test and save output
+    # Run the test and capture output
     log "Running equality test..."
-    ./sgx_equality_test 50 | tee >(grep "^[0-9]" > temp_output.txt)
+    ./sgx_equality_test 50 | while IFS=',' read -r test matches nonmatches errors totaltime processtime enctime dectime overhead pagefaults; do
+        # Skip header line
+        if [ "$test" != "Test" ]; then
+            # Convert microseconds to milliseconds and calculate total runtime
+            dec_ms=$(echo "scale=3; $dectime/1000" | bc)
+            proc_ms=$(echo "scale=3; $processtime/1000" | bc)
+            enc_ms=$(echo "scale=3; $enctime/1000" | bc)
+            total_ms=$(echo "scale=3; $totaltime/1000" | bc)
 
-    # Convert microseconds to milliseconds and save to size-specific CSV
-    awk -F',' '{printf "%d,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%d\n", 
-        $1, $2, $3, $4, 
-        $5/1000, $6/1000, $7/1000, $8/1000, 
-        $9}' temp_output.txt > temp_converted.txt
-    cat temp_converted.txt >> "$DETAIL_FILE"
+            # Write to detail file
+            echo "$test,$dec_ms,$proc_ms,$matches,$enc_ms,$total_ms" >> "$DETAIL_FILE"
+        fi
+    done
 
-    # Calculate averages for summary (already in milliseconds)
-    awk -F',' '
-    BEGIN {total=0; proc=0; enc=0; over=0; page=0; count=0}
-    {
-        total+=$5; proc+=$6; enc+=$7; over+=$8; page+=$9; count++
-    }
-    END {
-        if(count>0) {
-            printf "%d,%.3f,%.3f,%.3f,%.3f,%.2f\n", 
-            '"$size"', 
-            total/count, 
-            proc/count, 
-            enc/count, 
-            over/count, 
-            page/count
-        }
-    }' temp_converted.txt >> "$SUMMARY_FILE"
+    # Calculate averages for summary
+    log "Calculating averages..."
+    avg_dec_ms=$(awk -F',' 'NR>1 {sum+=$2} END {printf "%.3f", sum/(NR-1)}' "$DETAIL_FILE")
+    avg_proc_ms=$(awk -F',' 'NR>1 {sum+=$3} END {printf "%.3f", sum/(NR-1)}' "$DETAIL_FILE")
+    avg_matches=$(awk -F',' 'NR>1 {sum+=$4} END {printf "%.3f", sum/(NR-1)}' "$DETAIL_FILE")
+    avg_enc_ms=$(awk -F',' 'NR>1 {sum+=$5} END {printf "%.3f", sum/(NR-1)}' "$DETAIL_FILE")
+    avg_total_ms=$(awk -F',' 'NR>1 {sum+=$6} END {printf "%.3f", sum/(NR-1)}' "$DETAIL_FILE")
 
-    # Remove temporary files
-    rm temp_output.txt temp_converted.txt
+    # Add to summary file
+    echo "$size,$avg_dec_ms,$avg_proc_ms,$avg_matches,$avg_enc_ms,$avg_total_ms" >> "$SUMMARY_FILE"
 
-    # Clean up sealed data files
-    rm -f ./tools/sealed_data/*.dat
-
-    # Small delay between tests
-    sleep 2
+    log "Completed test for size $size"
+    log "----------------------------------------"
 done
 
-log "Benchmark completed. Results saved to: $RESULTS_DIR"
-log "Summary of results:"
-echo "----------------------------------------"
-cat "$SUMMARY_FILE"
-echo "----------------------------------------"
+log "Benchmark complete! Results are in ${RESULTS_DIR}"

@@ -125,3 +125,5 @@ $(Signed_Enclave_Name): $(Enclave_Name)
 
 clean:
 	@rm -f $(App_Name) $(Enclave_Name) $(Signed_Enclave_Name) App/Enclave_u.* Enclave/Enclave_t.* *.o App/*.o Enclave/*.o
+	@rm -f tools/sealed_data/*.dat
+	@rm -rf results/*

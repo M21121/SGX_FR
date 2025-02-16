@@ -15,7 +15,10 @@ sgx_status_t ecall_decrypt_test_data(const uint8_t* encrypted_data, size_t encry
                                     uint8_t* decrypted_data, size_t decrypted_size);
 sgx_status_t ecall_initialize_aes_key(const uint8_t* key_data, size_t key_size);
 sgx_status_t ecall_check_number_encrypted(int number, uint8_t* encrypted_result, size_t result_size);
-
+sgx_status_t ecall_get_timing_info(uint64_t* encryption_time, 
+    uint64_t* processing_time,
+    uint64_t* total_time,
+    uint64_t* decryption_time);
 
 #if defined(__cplusplus)
 }
