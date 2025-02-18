@@ -1,5 +1,6 @@
-# Allow everything in Data directory
-!/Data/**
+# Never ignore anything in Data
+!Data/
+!Data/**
 
 # SGX specific
 *.signed.so
