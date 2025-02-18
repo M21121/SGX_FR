@@ -1,3 +1,6 @@
+# Allow everything in Data directory
+!/Data/**
+
 # SGX specific
 *.signed.so
 *.signed.dll
