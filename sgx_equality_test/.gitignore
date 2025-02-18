@@ -53,7 +53,7 @@ Thumbs.db
 
 # Text files
 *.txt
-*.csv
+# *.csv
 
 # Debug files
 *.dSYM/
